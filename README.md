@@ -57,23 +57,29 @@ To use, configure Apache for authentication first, then install mod_python, and 
 
 Restart Apache. Errors will be written to Apache's error log.
 
-## A side note about GSSAPI
+## A side note about SSO
 
-While this script works perfectly fine without any GSSAPI/Winbind/SSO stuff, I supposed it might be of interest to many. My Apache config for SSO against Active Directory looks basically like this:
+While this script works perfectly fine without any SSO stuff, I supposed it might be of interest to many.
+My Apache config for SSO against Active Directory looks basically like this:
 
 ``` 
 # Authentication   
 <LocationMatch "/repos/svn">
-    AuthType GSSAPI
-    AuthName "Subversion Repositories"
-    # GssapiSSLonly On
-    GssapiLocalName on
-    GssapiCredStore keytab:/etc/krb5.keytab
-    GssapiBasicAuth On  # Allow passwd also
-    GssapiConnectionBound On
-    GssapiSignalPersistentAuth On
-    Require valid-user
-    Satisfy All
+
+  # This used to be GSSAPI instead of mod_kerb, but
+  # password fallback didn't work with it
+  AuthType Kerberos
+  AuthName "Subversion Repositories"
+  KrbServiceName HTTP
+  KrbMethodNegotiate On
+  KrbMethodK5Passwd On
+  KrbSaveCredentials Off
+  KrbLocalUserMapping On
+  KrbVerifyKDC On
+  KrbAuthRealms MYDOMAIN.DIRECTORY
+  Krb5KeyTab /etc/krb5.keytab
+  require valid-user
+
 </LocationMatch>
 
 <Location "/repos/svn">
