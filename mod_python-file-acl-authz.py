@@ -106,9 +106,15 @@ def authzhandler(req, **kwargs):
       return apache.OK
     
     if (method not in write_methods) and (method not in read_methods):
-      req.log_error('auth_against_acl UNSUPPORTED METHOD: user=%s uri=%s file=%s method=%s perms=%s' % (username, uri, filename, method, str(perms)), apache.APLOG_WARNING)
+      req.log_error('auth_against_acl UNSUPPORTED METHOD: USER=%s URI=%s FILE=%s METHOD=%s PERMS=%s' % (username, uri, filename, method, str(perms)), apache.APLOG_WARNING)
       return apache.HTTP_METHOD_NOT_ALLOWED
-    else:
-      req.log_error('auth_against_acl DENIED: user=%s uri=%s file=%s method=%s perms=%s' % (username, uri, filename, method, str(perms)), apache.APLOG_WARNING)
+
+    msg = 'auth_against_acl DENIED: USER=%s URI=%s FILE=%s METHOD=%s PERMS=%s' % (username, uri, filename, method, str(perms))
+    req.log_error(msg, apache.APLOG_WARNING)
+
+    # Ugly hack: posing error message as an invalid XML element was the only way I could
+    # persuade Svn client to actually show it:
+    if method not in ('GET', 'POST'):
+      req.write('<?xml version="1.0" encoding="utf-8" ?><%s/>' % (re.sub('[^a-zA-Z0-9_.-]', '_', msg)))
 
     return apache.HTTP_UNAUTHORIZED
