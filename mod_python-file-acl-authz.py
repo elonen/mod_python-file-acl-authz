@@ -64,57 +64,76 @@ def check_acl(filename, username, log):
 
 # Test request against ACL, based on HTTP method, requested file and authenticated user
 def authzhandler(req, **kwargs):
-
-    # Fetch parameters from request
-    username = req.user
-    method = req.method
-    uri = req.uri
-    filename = re.sub('^[^/:]*:', '', str(req.filename)) # remove 'dev_svn:' prefix (and the like)
-
-    # Fetch root dir option
     opts = req.get_options()
-    if 'ACLCheckerRoot' not in opts:
-      req.log_error('auth_against_acl misconfigured! Missing "PythonOption ACLCheckerRoot".', apache.APLOG_CRIT)
-      return apache.HTTP_INTERNAL_SERVER_ERROR
-    root_dir = opts['ACLCheckerRoot'].rstrip('/') + '/'
+    debug = ('acl_authz_debug' in opts) and (opts['acl_authz_debug'].lower() in ('yes', 'true', 'on'))
 
-    # Get first dir/filename after root_dir and discard rest.
-    if filename.startswith(root_dir):
-      filename = filename[len(root_dir):]
-      first = re.sub('/.*$', '', filename)
-      filename = root_dir + first
+    # Decide wether to use filename or uri for determining
+    # filename to check ACLs for
+    path_var = 'filename'
+    path = req.filename
+    if 'acl_authz_path_var' in opts:
+      path_var = opts['acl_authz_path_var']
+      if path_var not in ('filename', 'uri'):
+        req.log_error('auth_against_acl: Config error: acl_authz_path_var must be "filename" or "uri". Was "%s".' % path_var, apache.APLOG_CRIT)
+        return apache.HTTP_INTERNAL_SERVER_ERROR
+      if path_var == 'uri':
+        path = req.uri
+
+    # Check required prefix option
+    if 'acl_authz_prefix_to_strip' not in opts:
+      req.log_error('auth_against_acl misconfigured! Missing "PythonOption acl_authz_prefix_to_strip".', apache.APLOG_CRIT)
+      return apache.HTTP_INTERNAL_SERVER_ERROR
+    prefix = opts['acl_authz_prefix_to_strip'].rstrip('/') + '/'
+
+    # Figure out which dir to look into for ACL check
+    acl_dir = prefix
+    if 'acl_authz_acl_dir' in opts:
+      acl_dir = opts['acl_authz_acl_dir']
+
+    if debug:
+      req.log_error('auth_against_acl DEBUG: request USER=%s REQ_URI=%s REQ_FILE=%s METHOD=%s"' % (req.user, req.uri, req.filename, req.method), apache.APLOG_CRIT)
+
+    # Get first dir/file after prefix and discard rest
+    if path.startswith(prefix):
+      path = path[len(prefix):]
+      first = re.sub('/.*$', '', path)
+      # Reconstruct final filepath
+      path = acl_dir + first
     else:
-      req.log_error('auth_against_acl: filename "%s" not prefixed with root_dir "%s". DENYING.' % (filename, root_dir), apache.APLOG_WARNING)
-      return apache.HTTP_UNAUTHORIZED
+      req.log_error('auth_against_acl: path "%s" not prefixed with "%s". DENYING.' % (path, prefix), apache.APLOG_WARNING)
+      return apache.HTTP_FORBIDDEN
 
     # Check ACL against user and filename
     perms = {}
     try:
-      perms = check_acl(filename, username, req.log_error)
+      perms = check_acl(path, req.user, req.log_error)
     except IOError as e:
-      req.log_error('auth_against_acl ' + str(e) + " : " + str(filename))
+      req.log_error('auth_against_acl ' + str(e) + " - PATH = " + str(path))
       return apache.HTTP_NOT_FOUND
     except Exception as e:
       req.log_error('auth_against_acl raised an Exception:' + str(e))
 
+    if debug:
+      req.log_error('auth_against_acl DEBUG: acl on file "%s" for user "%s" = %s' % (path, req.user, str(perms)), apache.APLOG_CRIT)
+
     # Depending on HTTP method, check either read or write permissions
     read_methods = ('OPTIONS', 'PROPFIND', 'GET', 'REPORT', 'HEAD')
     write_methods = ('MKACTIVITY', 'PROPPATCH', 'PUT', 'POST', 'CHECKOUT', 'MKCOL', 'MOVE', 'COPY', 'DELETE', 'LOCK', 'UNLOCK', 'MERGE', 'PATCH')
-    if perms['r'] and method in read_methods:
+    if perms['r'] and req.method in read_methods:
       return apache.OK
-    if perms['w'] and method in write_methods:
+    if perms['w'] and req.method in write_methods:
       return apache.OK
     
-    if (method not in write_methods) and (method not in read_methods):
-      req.log_error('auth_against_acl UNSUPPORTED METHOD: USER=%s URI=%s FILE=%s METHOD=%s PERMS=%s' % (username, uri, filename, method, str(perms)), apache.APLOG_WARNING)
+    if (req.method not in write_methods) and (req.method not in read_methods):
+      req.log_error('auth_against_acl UNSUPPORTED METHOD: %s (USER=%s REQ_URI=%s REQ_FILE=%s)' % (req.method, req.user, req.uri, req.filename), apache.APLOG_WARNING)
       return apache.HTTP_METHOD_NOT_ALLOWED
 
-    msg = 'auth_against_acl DENIED: USER=%s URI=%s FILE=%s METHOD=%s PERMS=%s' % (username, uri, filename, method, str(perms))
+    msg = 'auth_against_acl DENIED: USER=%s PATH=%s METHOD=%s PERMS=%s' % (req.user, path, req.method, str(perms))
     req.log_error(msg, apache.APLOG_WARNING)
 
     # Ugly hack: posing error message as an invalid XML element was the only way I could
     # persuade Svn client to actually show it:
-    if method not in ('GET', 'POST'):
+    if req.method not in ('GET', 'POST'):
       req.write('<?xml version="1.0" encoding="utf-8" ?><%s/>' % (re.sub('[^a-zA-Z0-9_.-]', '_', msg)))
 
-    return apache.HTTP_UNAUTHORIZED
+    return apache.HTTP_FORBIDDEN

@@ -50,7 +50,10 @@ and write permissions. E.g. to grant read-only permissions to group
 To use, configure Apache for authentication first, then install mod_python, and add to your Apache configs something like this:
 
 ```
-  PythonOption ACLCheckerRoot /mnt/repos/svn/
+  PythonOption acl_authz_debug                  On
+  PythonOption acl_authz_path_var               uri
+  PythonOption acl_authz_prefix_to_strip        /svn/
+  PythonOption acl_authz_acl_dir                /mnt/repos/svn/
   PythonAuthzHandler /mnt/repos/mod_python-file-acl-authz.py
   PythonDebug On
 ```
